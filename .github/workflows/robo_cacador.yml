@@ -1,0 +1,45 @@
+name: 🕷️ Robô Caçador de Editais
+
+# Define quando o robô vai acordar
+on:
+  schedule:
+    #  Meia-noite, a cada 2 dias
+    - cron: '0 0 */2 * *' 
+  workflow_dispatch: # Permite que você clique num botão no GitHub para rodar manualmente quando quiser
+
+# Permissão vital para o robô poder "escrever" (salvar) o banco de dados atualizado de volta no GitHub
+permissions:
+  contents: write
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Clonar os ficheiros do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Instalar dependências (Bibliotecas)
+        run: pip install -r requirements.txt
+
+      - name: 🤖 Acordar o Robô (Executar o Crawler)
+        run: python cacador_editais.py
+
+      - name: 💾 Guardar os novos dados no Banco Vetorial
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Adiciona as mudanças da pasta do banco de dados
+          git add banco_vetorial/
+          
+          # Se o robô encontrou dados novos, ele faz o commit. Se não, ignora o erro e segue em frente.
+          git commit -m "🤖 Atualização automática: Novos editais adicionados ao banco" || echo "Nenhum edital novo hoje. Nada a salvar."
+          
+          # Envia os dados atualizados de volta para o repositório
+          git push
