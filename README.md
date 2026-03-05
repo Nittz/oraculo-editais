@@ -24,13 +24,11 @@ Este projeto utiliza uma arquitetura criativa e de custo zero para operar 100% n
 Siga os passos abaixo para correr o projeto na sua máquina:
 
 **1. Clone o repositório e aceda à pasta:**
-```bash
+```
 git clone [https://github.com/SeuUsuario/oraculo-editais.git](https://github.com/SeuUsuario/oraculo-editais.git)
 cd oraculo-editais
+
 2. Crie e ative o ambiente virtual:
-
-Bash
-
 python -m venv venv
 
 # Se estiver no Windows:
@@ -39,22 +37,16 @@ venv\Scripts\activate
 # Se estiver no Linux ou Mac:
 source venv/bin/activate
 3. Instale as dependências:
-
-Bash
-
 pip install -r requirements.txt
+
 4. Configuração da API Key (Gemini):
 Crie uma pasta oculta chamada .streamlit e um ficheiro secrets.toml no seu interior:
-
-Bash
 
 mkdir .streamlit
 echo 'GEMINI_API_KEY = "SUA_CHAVE_AQUI"' > .streamlit/secrets.toml
 (Nota: Substitua "SUA_CHAVE_AQUI" pela sua chave real gerada no Google AI Studio).
 
 5. Inicie o sistema:
-
-Bash
 
 # Opcional: Execute o robô para popular o banco de dados inicial
 python cacador_editais.py
