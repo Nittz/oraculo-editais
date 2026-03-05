@@ -10,34 +10,22 @@ CAMINHO_BANCO = os.path.join(DIRETORIO_ATUAL, "banco_vetorial")
 
 st.set_page_config(page_title="Oráculo Editais PRO", page_icon="📊", layout="wide")
 
-# CARREGAMENTO SEGURO E LIMPO DA API KEY
-def configurar_ia():
-    try:
-        # O .strip() remove espaços ou quebras de linha acidentais
-        chave = st.secrets["GEMINI_API_KEY"].strip()
-        if not chave or chave == "cole-aqui":
-            st.error("⚠️ A chave configurada nos Secrets parece estar vazia ou é o texto de exemplo.")
-            st.stop()
-        genai.configure(api_key=chave)
-        return True
-    except KeyError:
-        st.error("⚠️ Chave 'GEMINI_API_KEY' não encontrada nos Secrets do Streamlit.")
-        st.info("Aceda a 'Settings' -> 'Secrets' e adicione: GEMINI_API_KEY = 'sua-chave'")
-        st.stop()
-    except Exception as e:
-        st.error(f"⚠️ Erro ao configurar API: {e}")
-        st.stop()
+# Carregamento da API Key de forma segura para a nuvem
+try:
+    CHAVE_GEMINI = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=CHAVE_GEMINI)
+except KeyError:
+    st.error("⚠️ Chave da API não configurada. Por favor, adicione 'GEMINI_API_KEY' nos Secrets do Streamlit Cloud.")
+    st.stop()
 
-configurar_ia()
-
+# Função original que estava a funcionar corretamente para carregar o modelo
 @st.cache_resource
 def carregar_motor_ia():
-    try:
-        # Define diretamente o modelo 1.5 Flash (ativo e suportado na API v1beta)
-        return genai.GenerativeModel('gemini-1.5-flash')
-    except Exception as e:
-        st.error(f"Erro ao carregar o modelo de IA: {e}")
-        st.stop()
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            nome_limpo = m.name.replace("models/", "")
+            return genai.GenerativeModel(nome_limpo)
+    return genai.GenerativeModel('gemini-1.5-flash')
 
 modelo = carregar_motor_ia()
 
@@ -48,10 +36,10 @@ def carregar_banco():
 
 colecao = carregar_banco()
 
-# --- Recuperação de Dados ---
 dados_banco = colecao.get()
 total_chunks = len(dados_banco['ids']) if dados_banco['ids'] else 0
 
+# Processamento e separação de dados brutos
 editais_mg_brutos = {}
 editais_nacional_brutos = {}
 
@@ -66,73 +54,128 @@ if dados_banco['metadatas']:
             else:
                 editais_nacional_brutos[titulo_limpo] = salario
 
-# --- Interface Visual (Sidebar) ---
+# Inicialização da Interface Visual (Sidebar)
 with st.sidebar:
     st.title("⚙️ Painel de Controle")
-    st.markdown("Status da Base de Dados e IA.")
+    st.markdown("Monitoramento do Banco Vetorial e Status da IA.")
     
     st.divider()
     
     st.markdown("### 🎯 Filtros de Elite")
-    busca_texto = st.text_input("🔍 Buscar Órgão/Cargo:", "").strip().lower()
-    filtro_salario = st.slider("💰 Salário Mínimo:", 0, 30000, 0, 1000, "R$ %d")
+    st.caption("Filtre as oportunidades pelo seu nível de interesse:")
+    
+    busca_texto = st.text_input("🔍 Buscar Órgão/Cargo (ex: Câmara, UFMG):", "").strip().lower()
+    filtro_salario = st.slider("💰 Salário Mínimo Exigido:", min_value=0, max_value=30000, value=0, step=1000, format="R$ %d")
     
     editais_mg = {k: v for k, v in editais_mg_brutos.items() if v >= filtro_salario and (busca_texto in k.lower() if busca_texto else True)}
     editais_nacional = {k: v for k, v in editais_nacional_brutos.items() if v >= filtro_salario and (busca_texto in k.lower() if busca_texto else True)}
     
     st.divider()
-    st.markdown(f"### 📚 Editais Filtrados ({len(editais_nacional) + len(editais_mg)})")
     
+    st.markdown(f"### 📚 Editais em Aberto ({len(editais_nacional) + len(editais_mg)})")
+    
+    st.markdown("**Concursos Nacionais / Federais:**")
     if editais_nacional:
-        for t, s in editais_nacional.items():
-            st.info(f"🇧🇷 {t}" + (f"\n*(R$ {s:,.2f})*" if s > 0 else ""))
+        for titulo, sal in editais_nacional.items():
+            if sal > 0:
+                st.info(f"🇧🇷 {titulo}\n\n*(Até R$ {sal:,.2f})*")
+            else:
+                st.info(f"🇧🇷 {titulo}")
+    else:
+        st.caption("Nenhum edital nacional atende aos filtros.")
+        
+    st.write("") 
     
+    st.markdown("**Concursos em Minas Gerais:**")
     if editais_mg:
-        for t, s in editais_mg.items():
-            st.success(f"🔺 {t}" + (f"\n*(R$ {s:,.2f})*" if s > 0 else ""))
+        for titulo, sal in editais_mg.items():
+            if sal > 0:
+                st.success(f"🔺 {titulo}\n\n*(Até R$ {sal:,.2f})*")
+            else:
+                st.success(f"🔺 {titulo}")
+    else:
+        st.caption("Nenhum edital de MG atende aos filtros.")
 
-# --- Dashboard Principal ---
-st.title("📊 Centro de Inteligência RAG")
-aba_raiox, aba_analytics, aba_chat = st.tabs(["🔍 Raio-X do Edital", "📈 Analytics", "💬 Oráculo Chat"])
+# Renderização do Dashboard Principal
+st.title("📊 Centro de Inteligência RAG (Visão de Mercado)")
+st.markdown("Dashboard analítico unificando Editais **Nacionais** e de **Minas Gerais**, com extração inteligente de salários em tempo real.")
+
+aba_raiox, aba_analytics, aba_chat = st.tabs(["🔍 Raio-X do Edital", "📈 Business Intelligence (BI)", "💬 Oráculo (Chat Livre)"])
 
 with aba_raiox:
-    st.markdown("### 🤖 Extração Proativa")
+    st.markdown("### 🤖 Extração Proativa de Dados")
+    st.write("Selecione um edital da base de dados. A IA irá ler o documento isoladamente e gerar um resumo estruturado e focado no que interessa.")
+    
     todos_titulos = sorted(list(editais_nacional.keys()) + list(editais_mg.keys()))
     
     if todos_titulos:
-        col_sel, col_btn = st.columns([3, 1])
-        with col_sel:
+        col_selecao, col_botao = st.columns([3, 1])
+        
+        with col_selecao:
             edital_alvo = st.selectbox("Selecione o Concurso:", todos_titulos)
-        with col_btn:
-            st.write("")
+            
+        with col_botao:
+            st.write("") 
             st.write("")
             gerar = st.button("Gerar Raio-X Completo", type="primary", use_container_width=True)
             
         if gerar:
-            with st.spinner(f"A analisar: {edital_alvo}..."):
-                dados = colecao.get(where={"titulo": edital_alvo})
-                if dados and dados['documents']:
-                    texto = "\n\n".join(dados['documents'])
-                    if len(texto) > 60000:
-                        texto = texto[:60000] + "\n\n[Texto truncado para limites da API]"
+            with st.spinner(f"A analisar o edital: {edital_alvo}..."):
+                dados_isolados = colecao.get(where={"titulo": edital_alvo})
+                
+                if dados_isolados and dados_isolados['documents']:
+                    texto_completo_edital = "\n\n".join(dados_isolados['documents'])
                     
-                    prompt = f"Faça um Raio-X objetivo deste edital, focando em Cargos, Vagas, Salários, Datas e Requisitos:\n\n{texto}"
+                    # Limite de segurança para evitar o erro 429
+                    LIMITE_CARACTERES = 60000
+                    if len(texto_completo_edital) > LIMITE_CARACTERES:
+                        texto_completo_edital = texto_completo_edital[:LIMITE_CARACTERES] + "\n\n[AVISO TÉCNICO: O documento original é demasiado extenso. O texto foi truncado para respeitar os limites da API.]"
+                    
+                    prompt_raiox = f"""
+                    Aja como um Analista de Concursos Público Sênior, objetivo e proativo.
+                    Faça um "Raio-X" do edital fornecido, extraindo as informações vitais de forma direta.
+                    
+                    Regra: Se não encontrar a informação, escreva explicitamente "Não especificado no documento". Não invente dados.
+                    
+                    Estrutura de saída obrigatória (use Markdown):
+                    ### 🎯 Resumo da Oportunidade
+                    [Breve descrição do órgão e objetivo do concurso]
+                    
+                    ### 💼 Cargos e Vagas Principais
+                    [Lista com bullet points dos principais cargos e quantidade de vagas]
+                    
+                    ### 💰 Remuneração e Benefícios
+                    [Detalhes de salários e benefícios encontrados]
+                    
+                    ### 📅 Datas Importantes
+                    [Período de inscrição, data da prova, etc.]
+                    
+                    ### 🎓 Requisitos de Escolaridade
+                    [Níveis exigidos: Médio, Técnico, Superior, etc.]
+                    
+                    ---
+                    TEXTO DO EDITAL:
+                    {texto_completo_edital}
+                    """
                     
                     try:
-                        res = modelo.generate_content(prompt)
-                        st.success("Análise concluída!")
-                        url = f"https://www.google.com/search?q=Concurso+{edital_alvo.replace(' ', '+')}+Inscrição"
-                        st.link_button("🔗 Ver Página Oficial", url)
-                        st.markdown(res.text)
+                        resposta = modelo.generate_content(prompt_raiox)
+                        st.success("Análise concluída com sucesso!")
+                        
+                        url_busca_inteligente = f"https://www.google.com/search?q=Concurso+{edital_alvo.replace(' ', '+')}+Inscrição"
+                        st.link_button("🔗 Abrir Página de Inscrição (Pesquisa Web)", url_busca_inteligente, type="secondary")
+                        
+                        with st.container(border=True):
+                            st.markdown(resposta.text)
+                            
                     except Exception as e:
-                        st.error(f"Erro na IA: {e}")
+                        st.error(f"Erro na comunicação com a API de Inteligência Artificial: {e}")
                 else:
-                    st.warning("Conteúdo do edital não encontrado no banco.")
+                    st.warning("Não foi possível carregar o texto deste edital.")
     else:
-        st.info("Nenhum edital na base de dados.")
+        st.info("Nenhum edital atende aos critérios atuais do filtro.")
 
 with aba_analytics:
-    # --- RESTAURADO: Cálculo de estatísticas salariais ---
     sals_mg = [s for s in editais_mg.values() if s > 0]
     sals_nac = [s for s in editais_nacional.values() if s > 0]
     
@@ -195,7 +238,6 @@ with aba_analytics:
             st.info("Nenhum salário capturado nos editais que passaram pelo filtro.")
 
 with aba_chat:
-    # --- RESTAURADO: Chat completo com prompt estruturado ---
     st.markdown("### 💬 Consulta Livre à Base de Dados Inteira")
     st.write("Faça perguntas gerais e a IA procurará respostas em **todos** os editais disponíveis em simultâneo.")
     
@@ -209,13 +251,13 @@ with aba_chat:
                     contexto_encontrado = "\n\n".join(resultados['documents'][0])
                     prompt_sistema = f"""
                     Você é um assistente focado em concursos públicos.
-                    Responda à pergunta do utilizador usando APENAS as informações abaixo.
+                    Responda à pergunta do usuário usando APENAS as informações abaixo.
                     Se a resposta não estiver no texto abaixo, diga 'Não encontrei essa informação no documento'.
                     
                     TEXTO DE REFERÊNCIA (Trechos extraídos do banco de dados):
                     {contexto_encontrado}
                     
-                    PERGUNTA DO UTILIZADOR:
+                    PERGUNTA DO USUÁRIO:
                     {pergunta}
                     """
                     try:
@@ -224,6 +266,6 @@ with aba_chat:
                         with st.expander("🔍 Ver trechos da base de dados utilizados"):
                             st.info(contexto_encontrado)
                     except Exception as e:
-                        st.error(f"Erro ao ligar à nuvem: {e}")
+                        st.error(f"Erro ao conectar com a nuvem: {e}")
             else:
                 st.warning("O banco de dados ainda está vazio.")
