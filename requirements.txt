@@ -1,0 +1,7 @@
+streamlit
+chromadb
+google-generativeai
+pandas
+requests
+beautifulsoup4
+pypdf
