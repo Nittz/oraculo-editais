@@ -8,11 +8,15 @@ import os
 DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
 CAMINHO_BANCO = os.path.join(DIRETORIO_ATUAL, "banco_vetorial")
 
-# Configuracao da API do Google Gemini
-CHAVE_GEMINI = "AIzaSyAsLlVdzYit8jwlDPcROKQnya0mV7cU7B0"
-genai.configure(api_key=CHAVE_GEMINI)
-
 st.set_page_config(page_title="Oráculo Editais PRO", page_icon="📊", layout="wide")
+
+# CARREGAMENTO SEGURO DA API KEY (Evita vazamentos no GitHub)
+try:
+    CHAVE_GEMINI = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=CHAVE_GEMINI)
+except KeyError:
+    st.error("⚠️ Chave da API não configurada. Por favor, adicione 'GEMINI_API_KEY' nos Secrets do Streamlit Cloud.")
+    st.stop()
 
 @st.cache_resource
 def carregar_motor_ia():
@@ -57,7 +61,7 @@ with st.sidebar:
     st.divider()
     
     # 1. FILTRO DE ELITE E PALAVRA-CHAVE
-    st.markdown("### Filtros")
+    st.markdown("### 🎯 Filtros de Elite")
     st.caption("Filtre as oportunidades pelo seu nível de interesse:")
     
     busca_texto = st.text_input("🔍 Buscar Órgão/Cargo (ex: Câmara, UFMG):", "").strip().lower()
@@ -114,13 +118,12 @@ with aba_raiox:
             edital_alvo = st.selectbox("Selecione o Concurso:", todos_titulos)
             
         with col_botao:
-            st.write("") # Espaçamento para alinhar o botão com o selectbox
+            st.write("") 
             st.write("")
             gerar = st.button("Gerar Raio-X Completo", type="primary", use_container_width=True)
             
         if gerar:
             with st.spinner(f"A analisar o edital: {edital_alvo}..."):
-                # Filtra cirurgicamente apenas os fragmentos (chunks) do edital selecionado
                 dados_isolados = colecao.get(where={"titulo": edital_alvo})
                 
                 if dados_isolados and dados_isolados['documents']:
@@ -157,7 +160,6 @@ with aba_raiox:
                         resposta = modelo.generate_content(prompt_raiox)
                         st.success("Análise concluída com sucesso!")
                         
-                        # 2. BOTÃO DE ACESSO INTELIGENTE DIRETO
                         url_busca_inteligente = f"https://www.google.com/search?q=Concurso+{edital_alvo.replace(' ', '+')}+Inscrição"
                         st.link_button("🔗 Abrir Página de Inscrição (Pesquisa Web)", url_busca_inteligente, type="secondary")
                         
@@ -172,7 +174,6 @@ with aba_raiox:
         st.info("Nenhum edital atende aos critérios atuais do filtro.")
 
 with aba_analytics:
-    # Calculo de estatisticas salariais baseadas no filtro atual
     sals_mg = [s for s in editais_mg.values() if s > 0]
     sals_nac = [s for s in editais_nacional.values() if s > 0]
     
@@ -200,7 +201,6 @@ with aba_analytics:
         
     st.divider()
     
-    # Secao: Ranking Financeiro e Volume
     col_graf1, col_graf2 = st.columns(2)
     
     with col_graf1:
@@ -220,12 +220,10 @@ with aba_analytics:
             df_ranking_completo = pd.DataFrame(list(ranking_real.items()), columns=['Concurso', 'Salário Máx.'])
             df_ranking_completo = df_ranking_completo.sort_values(by='Salário Máx.', ascending=False)
             
-            # Copia para visualizacao (Top 5)
             df_visual = df_ranking_completo.head(5).copy()
             df_visual['Salário Máx.'] = df_visual['Salário Máx.'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             st.dataframe(df_visual, use_container_width=True, hide_index=True)
             
-            # 3. EXPORTAÇÃO DE DADOS (CSV)
             csv_data = df_ranking_completo.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Baixar Ranking Completo (CSV)",
