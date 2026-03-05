@@ -136,20 +136,98 @@ with aba_raiox:
         st.info("Nenhum edital na base de dados.")
 
 with aba_analytics:
-    st.write("Estatísticas financeiras e de volume de dados.")
-    # Implementação simplificada para foco no debug da IA
-    st.metric("Total de Chunks no Banco", total_chunks)
+    # --- RESTAURADO: Cálculo de estatísticas salariais ---
+    sals_mg = [s for s in editais_mg.values() if s > 0]
+    sals_nac = [s for s in editais_nacional.values() if s > 0]
+    
+    media_mg = sum(sals_mg) / len(sals_mg) if sals_mg else 0
+    media_nac = sum(sals_nac) / len(sals_nac) if sals_nac else 0
+    diferenca = media_nac - media_mg
+    
+    st.markdown("### 💰 Análise Financeira (Média Salarial Oferecida)")
+    col_s1, col_s2, col_s3 = st.columns(3)
+    
+    txt_nac = f"R$ {media_nac:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    txt_mg = f"R$ {media_mg:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+    col_s1.metric("Média Nacional", txt_nac)
+    col_s2.metric("Média Minas Gerais", txt_mg)
+    
+    if diferenca > 0:
+        texto_dif = f"+ R$ {diferenca:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        col_s3.metric("Diferença", texto_dif, "Nacional paga mais")
+    elif diferenca < 0:
+        texto_dif = f"- R$ {abs(diferenca):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        col_s3.metric("Diferença", texto_dif, "MG paga mais", delta_color="inverse")
+    else:
+        col_s3.metric("Diferença", "R$ 0,00", "Equivalente")
+        
+    st.divider()
+    
+    col_graf1, col_graf2 = st.columns(2)
+    
+    with col_graf1:
+        st.markdown("### 🗺️ Volume por Região (Filtrado)")
+        dados_grafico_regiao = pd.DataFrame({
+            'Região': ['Nacionais (BR)', 'Minas Gerais (MG)'],
+            'Quantidade': [len(editais_nacional), len(editais_mg)]
+        })
+        st.bar_chart(dados_grafico_regiao.set_index('Região'), color="#3b82f6")
+        
+    with col_graf2:
+        st.markdown("### 🏆 Top Maiores Salários")
+        todos_filtrados = {**editais_nacional, **editais_mg}
+        ranking_real = {k: v for k, v in todos_filtrados.items() if v > 0}
+        
+        if ranking_real:
+            df_ranking_completo = pd.DataFrame(list(ranking_real.items()), columns=['Concurso', 'Salário Máx.'])
+            df_ranking_completo = df_ranking_completo.sort_values(by='Salário Máx.', ascending=False)
+            
+            df_visual = df_ranking_completo.head(5).copy()
+            df_visual['Salário Máx.'] = df_visual['Salário Máx.'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.dataframe(df_visual, use_container_width=True, hide_index=True)
+            
+            csv_data = df_ranking_completo.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Baixar Ranking Completo (CSV)",
+                data=csv_data,
+                file_name="ranking_concursos.csv",
+                mime="text/csv",
+                help="Faça o download da tabela completa baseada nos filtros aplicados."
+            )
+        else:
+            st.info("Nenhum salário capturado nos editais que passaram pelo filtro.")
 
 with aba_chat:
-    st.write("Chat interativo com a base de dados.")
-    pergunta = st.chat_input("Faça uma pergunta...")
+    # --- RESTAURADO: Chat completo com prompt estruturado ---
+    st.markdown("### 💬 Consulta Livre à Base de Dados Inteira")
+    st.write("Faça perguntas gerais e a IA procurará respostas em **todos** os editais disponíveis em simultâneo.")
+    
+    pergunta = st.chat_input("Ex: Existe alguma vaga para Engenheiro Civil em Minas Gerais?")
     if pergunta:
         st.chat_message("user").write(pergunta)
-        if colecao.count() > 0:
-            res_vetor = colecao.query(query_texts=[pergunta], n_results=3)
-            contexto = "\n".join(res_vetor['documents'][0])
-            try:
-                res_ia = modelo.generate_content(f"Contexto: {contexto}\n\nPergunta: {pergunta}")
-                st.chat_message("assistant").write(res_ia.text)
-            except Exception as e:
-                st.error(f"Erro no Chat: {e}")
+        with st.spinner("A analisar os vetores na base de dados..."):
+            if colecao.count() > 0:
+                resultados = colecao.query(query_texts=[pergunta], n_results=5) 
+                if resultados and resultados['documents'] and len(resultados['documents'][0]) > 0:
+                    contexto_encontrado = "\n\n".join(resultados['documents'][0])
+                    prompt_sistema = f"""
+                    Você é um assistente focado em concursos públicos.
+                    Responda à pergunta do utilizador usando APENAS as informações abaixo.
+                    Se a resposta não estiver no texto abaixo, diga 'Não encontrei essa informação no documento'.
+                    
+                    TEXTO DE REFERÊNCIA (Trechos extraídos do banco de dados):
+                    {contexto_encontrado}
+                    
+                    PERGUNTA DO UTILIZADOR:
+                    {pergunta}
+                    """
+                    try:
+                        resposta_ia = modelo.generate_content(prompt_sistema)
+                        st.chat_message("assistant").write(resposta_ia.text)
+                        with st.expander("🔍 Ver trechos da base de dados utilizados"):
+                            st.info(contexto_encontrado)
+                    except Exception as e:
+                        st.error(f"Erro ao ligar à nuvem: {e}")
+            else:
+                st.warning("O banco de dados ainda está vazio.")
