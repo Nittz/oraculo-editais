@@ -33,14 +33,10 @@ configurar_ia()
 @st.cache_resource
 def carregar_motor_ia():
     try:
-        # Tenta encontrar um modelo disponível (preferência pelo flash)
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'gemini-1.5-flash' in m.name:
-                    return genai.GenerativeModel('gemini-1.5-flash')
-        return genai.GenerativeModel('gemini-pro')
+        # Define diretamente o modelo 1.5 Flash (ativo e suportado na API v1beta)
+        return genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        st.error(f"Erro ao listar modelos: {e}. Verifique se a sua chave é válida.")
+        st.error(f"Erro ao carregar o modelo de IA: {e}")
         st.stop()
 
 modelo = carregar_motor_ia()
