@@ -129,6 +129,14 @@ with aba_raiox:
                 if dados_isolados and dados_isolados['documents']:
                     texto_completo_edital = "\n\n".join(dados_isolados['documents'])
                     
+                    # --- PREVENÇÃO DO ERRO 429 (QUOTA EXCEEDED) ---
+                    # Limitar o tamanho do payload enviado para a API da Google.
+                    # 60.000 caracteres garante que capturamos as regras principais
+                    # sem sobrecarregar a cota gratuita com PDFs de 200 páginas.
+                    LIMITE_CARACTERES = 60000
+                    if len(texto_completo_edital) > LIMITE_CARACTERES:
+                        texto_completo_edital = texto_completo_edital[:LIMITE_CARACTERES] + "\n\n[AVISO TÉCNICO: O documento original é demasiado extenso. O texto foi truncado para respeitar os limites da API. As regras principais foram preservadas.]"
+                    
                     prompt_raiox = f"""
                     Aja como um Analista de Concursos Público Sênior, objetivo e proativo.
                     Faça um "Raio-X" do edital fornecido, extraindo as informações vitais de forma direta.
