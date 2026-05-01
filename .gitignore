@@ -1,0 +1,39 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Segredos
+.env
+.env.local
+.streamlit/secrets.toml
+
+# Banco vetorial (gerado pelo crawler, não versionar)
+banco_vetorial/
+
+# PDFs baixados (raw data)
+*.pdf
+edital_aranha.pdf
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Testes / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+build/
+dist/
+*.egg-info/
