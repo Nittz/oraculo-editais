@@ -157,7 +157,9 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ### 4. Popular o banco vetorial (primeira execução)
 
 ```bash
-python cacador_editais.py
+python src/oraculo/crawler.py
+# ou, com Make:
+make crawl
 ```
 
 Cria a pasta `banco_vetorial/` e povoa com os editais do momento. **Demora alguns minutos** (download dos PDFs + geração de embeddings).
@@ -165,10 +167,14 @@ Cria a pasta `banco_vetorial/` e povoa com os editais do momento. **Demora algun
 ### 5. Rodar o dashboard
 
 ```bash
-streamlit run dashboard_pro.py
+streamlit run app/dashboard.py
+# ou, com Make:
+make app
 ```
 
 Abre em `http://localhost:8501`.
+
+> Para listar todos os comandos disponíveis no Makefile: `make help`.
 
 ---
 
@@ -188,10 +194,16 @@ oraculo-rag/
 │   └── robo_cacador.yml          # Cron do crawler
 ├── .streamlit/
 │   └── secrets.toml.example      # Template de secrets (real fica gitignored)
-├── outputs/
-│   └── prints/                   # Capturas do dashboard (a popular)
-├── cacador_editais.py            # Crawler + ingestão vetorial
-├── dashboard_pro.py              # Aplicação Streamlit (3 abas)
+├── src/oraculo/
+│   ├── __init__.py
+│   └── crawler.py                # Crawler + ingestão vetorial
+├── app/
+│   └── dashboard.py              # Aplicação Streamlit (3 abas)
+├── docs/
+│   └── dicionario_dados.md       # Schema dos campos persistidos
+├── tests/                        # Testes automatizados (a popular)
+├── outputs/prints/               # Capturas do dashboard (a popular)
+├── Makefile                      # Atalhos: install, crawl, app, clean
 ├── requirements.txt              # Dependências pinadas
 ├── .gitignore                    # venv, banco_vetorial, .env, *.pdf
 ├── .env.example                  # Alternativa ao secrets.toml

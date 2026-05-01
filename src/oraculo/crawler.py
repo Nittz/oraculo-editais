@@ -7,9 +7,9 @@ from urllib.parse import urljoin
 import time
 import re
 
-# Configuração de diretório absoluto para o banco vetorial
-DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
-CAMINHO_BANCO = os.path.join(DIRETORIO_ATUAL, "banco_vetorial")
+# Diretório absoluto do banco vetorial (raiz do projeto, não do pacote)
+RAIZ_PROJETO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CAMINHO_BANCO = os.path.join(RAIZ_PROJETO, "banco_vetorial")
 
 # Mapeamento de URLs alvo (a secção de MG encontra-se na página do Sudeste)
 urls_alvo = {

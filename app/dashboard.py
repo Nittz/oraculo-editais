@@ -1,21 +1,27 @@
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 import chromadb
 import google.generativeai as genai
 import pandas as pd
 import os
 
-# Definição de caminhos absolutos para persistência de dados
-DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
-CAMINHO_BANCO = os.path.join(DIRETORIO_ATUAL, "banco_vetorial")
+# Diretório absoluto do banco vetorial (raiz do projeto, não da pasta app/)
+RAIZ_PROJETO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CAMINHO_BANCO = os.path.join(RAIZ_PROJETO, "banco_vetorial")
 
 st.set_page_config(page_title="Oráculo Editais PRO", page_icon="📊", layout="wide")
 
-# Carregamento da API Key de forma segura para a nuvem
+# Carregamento da API Key (local: .streamlit/secrets.toml | deploy: Streamlit Cloud Secrets)
 try:
     CHAVE_GEMINI = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=CHAVE_GEMINI)
-except KeyError:
-    st.error("⚠️ Chave da API não configurada. Por favor, adicione 'GEMINI_API_KEY' nos Secrets do Streamlit Cloud.")
+except (KeyError, StreamlitSecretNotFoundError):
+    st.error(
+        "⚠️ Chave da API não configurada.\n\n"
+        "**Local:** crie `.streamlit/secrets.toml` (use `secrets.toml.example` como base) "
+        "e adicione `GEMINI_API_KEY = \"sua_chave\"`.\n\n"
+        "**Streamlit Cloud:** configure o segredo em *Settings → Secrets*."
+    )
     st.stop()
 
 # Função original que estava a funcionar corretamente para carregar o modelo

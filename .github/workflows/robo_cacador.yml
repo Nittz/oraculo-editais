@@ -28,7 +28,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 🤖 Acordar o Robô (Executar o Crawler)
-        run: python cacador_editais.py
+        run: python src/oraculo/crawler.py
 
       - name: 💾 Guardar os novos dados no Banco Vetorial
         run: |
