@@ -11,18 +11,26 @@ CAMINHO_BANCO = os.path.join(RAIZ_PROJETO, "banco_vetorial")
 
 st.set_page_config(page_title="Oráculo Editais PRO", page_icon="📊", layout="wide")
 
-# Carregamento da API Key (local: .streamlit/secrets.toml | deploy: Streamlit Cloud Secrets)
-try:
-    CHAVE_GEMINI = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=CHAVE_GEMINI)
-except (KeyError, StreamlitSecretNotFoundError):
+# Carregamento da API Key. Fontes (em ordem):
+#   1. st.secrets[...]          -> local com .streamlit/secrets.toml e Streamlit Cloud
+#   2. os.environ.get(...)      -> deploy via Docker (HF Spaces, Render, Fly.io, etc.)
+def _carregar_chave_gemini():
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except (KeyError, StreamlitSecretNotFoundError):
+        return os.environ.get("GEMINI_API_KEY")
+
+CHAVE_GEMINI = _carregar_chave_gemini()
+if not CHAVE_GEMINI:
     st.error(
         "⚠️ Chave da API não configurada.\n\n"
         "**Local:** crie `.streamlit/secrets.toml` (use `secrets.toml.example` como base) "
         "e adicione `GEMINI_API_KEY = \"sua_chave\"`.\n\n"
-        "**Streamlit Cloud:** configure o segredo em *Settings → Secrets*."
+        "**Streamlit Cloud:** configure o segredo em *Settings → Secrets*.\n\n"
+        "**Hugging Face Spaces / Docker:** defina a variável de ambiente `GEMINI_API_KEY`."
     )
     st.stop()
+genai.configure(api_key=CHAVE_GEMINI)
 
 # Função original que estava a funcionar corretamente para carregar o modelo
 @st.cache_resource
