@@ -105,13 +105,41 @@ O Space vai detectar o push, builda o container (~3-5 min) e o dashboard fica ac
 
 ## Atualizações periódicas
 
-Sempre que quiser atualizar o snapshot do banco vetorial e/ou trazer mudanças de código da `main`:
+A estratégia recomendada é **recriar `hf-deploy` como orphan a cada deploy**, em vez de mantê-la viva. Isso evita arrastar histórico do GitHub e simplifica o fluxo:
 
 ```bash
-# 1. Atualiza o banco vetorial
+# 1. Atualiza o banco vetorial (rodando da raiz do projeto, na main)
 python src/oraculo/crawler.py
 
-# 2. Vai para a branch de deploy
+# 2. Apaga a hf-deploy antiga e recria orphan a partir da main
+git branch -D hf-deploy
+git checkout --orphan hf-deploy
+git rm -r --cached . > /dev/null
+
+# 3. (na branch orphan) liberar banco_vetorial: editar .gitignore comentando a linha
+# 4. (na branch orphan) adicionar HF frontmatter no topo do README
+# 5. Commit único do snapshot
+git add -A
+git commit -m "deploy: snapshot $(date +%Y-%m-%d)"
+
+# 6. Push força
+git push hf +hf-deploy:main
+
+# 7. Volta para main (CUIDADO: ver gotcha abaixo)
+git checkout main
+```
+
+> ⚠️ **Gotcha do orphan branch:** ao voltar de `hf-deploy` para `main`, o git **apaga** os arquivos do `banco_vetorial/` localmente, porque eles eram *tracked* na orphan e estão *gitignored* na `main`. Isso é normal — basta rodar `python src/oraculo/crawler.py` de novo para reconstruir a base local. Se preferir preservar a base local, copie a pasta para fora do repo antes do `git checkout main`:
+> ```bash
+> cp -r banco_vetorial /tmp/banco_vetorial_backup
+> git checkout main
+> cp -r /tmp/banco_vetorial_backup banco_vetorial
+> ```
+
+(Trecho legado abaixo, mantido como referência caso queira preservar histórico em vez de recriar a branch:)
+
+```bash
+# Vai para a branch de deploy
 git checkout hf-deploy
 
 # 3. Traz mudanças da main

@@ -53,60 +53,79 @@ colecao = carregar_banco()
 dados_banco = colecao.get()
 total_chunks = len(dados_banco['ids']) if dados_banco['ids'] else 0
 
-# Processamento e separação de dados brutos
-editais_mg_brutos = {}
-editais_nacional_brutos = {}
-
-if dados_banco['metadatas']:
-    for meta in dados_banco['metadatas']:
-        if meta and 'titulo' in meta and 'abrangencia' in meta:
-            titulo_limpo = meta['titulo'].title()
-            salario = meta.get('salario', 0.0)
-            
-            if meta['abrangencia'] == 'Minas Gerais':
-                editais_mg_brutos[titulo_limpo] = salario
-            else:
-                editais_nacional_brutos[titulo_limpo] = salario
-
 # Inicialização da Interface Visual (Sidebar)
 with st.sidebar:
     st.title("⚙️ Painel de Controle")
     st.markdown("Monitoramento do Banco Vetorial e Status da IA.")
-    
+
     st.divider()
-    
+
     st.markdown("### 🎯 Filtros de Elite")
     st.caption("Filtre as oportunidades pelo seu nível de interesse:")
-    
+
     busca_texto = st.text_input("🔍 Buscar Órgão/Cargo (ex: Câmara, UFMG):", "").strip().lower()
     filtro_salario = st.slider("💰 Salário Mínimo Exigido:", min_value=0, max_value=30000, value=0, step=1000, format="R$ %d")
-    
-    editais_mg = {k: v for k, v in editais_mg_brutos.items() if v >= filtro_salario and (busca_texto in k.lower() if busca_texto else True)}
-    editais_nacional = {k: v for k, v in editais_nacional_brutos.items() if v >= filtro_salario and (busca_texto in k.lower() if busca_texto else True)}
-    
+    incluir_fechados = st.toggle(
+        "Incluir editais fechados",
+        value=False,
+        help="Mostra também editais que sumiram do portal entre rodadas (status=fechado).",
+    )
+
+    # Agrega chunks por título; aplica filtro de status (legado: ausência => aberto).
+    editais_mg_brutos = {}
+    editais_nacional_brutos = {}
+    if dados_banco['metadatas']:
+        for meta in dados_banco['metadatas']:
+            if not (meta and 'titulo' in meta and 'abrangencia' in meta):
+                continue
+            status = meta.get('status', 'aberto')
+            if status != 'aberto' and not incluir_fechados:
+                continue
+            titulo_limpo = meta['titulo'].title()
+            registro = {
+                'salario': meta.get('salario', 0.0),
+                'status': status,
+            }
+            if meta['abrangencia'] == 'Minas Gerais':
+                editais_mg_brutos[titulo_limpo] = registro
+            else:
+                editais_nacional_brutos[titulo_limpo] = registro
+
+    def _atende_filtros(titulo, info):
+        if info['salario'] < filtro_salario:
+            return False
+        if busca_texto and busca_texto not in titulo.lower():
+            return False
+        return True
+
+    editais_mg = {k: v for k, v in editais_mg_brutos.items() if _atende_filtros(k, v)}
+    editais_nacional = {k: v for k, v in editais_nacional_brutos.items() if _atende_filtros(k, v)}
+
     st.divider()
-    
-    st.markdown(f"### 📚 Editais em Aberto ({len(editais_nacional) + len(editais_mg)})")
-    
+
+    rotulo_secao = "📚 Editais" if incluir_fechados else "📚 Editais em Aberto"
+    st.markdown(f"### {rotulo_secao} ({len(editais_nacional) + len(editais_mg)})")
+
+    def _formata_card(titulo, info, prefixo):
+        sufixo_status = " — *fechado*" if info['status'] == 'fechado' else ""
+        salario_str = f"\n\n*(Até R$ {info['salario']:,.2f})*" if info['salario'] > 0 else ""
+        return f"{prefixo} {titulo}{sufixo_status}{salario_str}"
+
     st.markdown("**Concursos Nacionais / Federais:**")
     if editais_nacional:
-        for titulo, sal in editais_nacional.items():
-            if sal > 0:
-                st.info(f"🇧🇷 {titulo}\n\n*(Até R$ {sal:,.2f})*")
-            else:
-                st.info(f"🇧🇷 {titulo}")
+        for titulo, info in editais_nacional.items():
+            renderizador = st.warning if info['status'] == 'fechado' else st.info
+            renderizador(_formata_card(titulo, info, "🇧🇷"))
     else:
         st.caption("Nenhum edital nacional atende aos filtros.")
-        
-    st.write("") 
-    
+
+    st.write("")
+
     st.markdown("**Concursos em Minas Gerais:**")
     if editais_mg:
-        for titulo, sal in editais_mg.items():
-            if sal > 0:
-                st.success(f"🔺 {titulo}\n\n*(Até R$ {sal:,.2f})*")
-            else:
-                st.success(f"🔺 {titulo}")
+        for titulo, info in editais_mg.items():
+            renderizador = st.warning if info['status'] == 'fechado' else st.success
+            renderizador(_formata_card(titulo, info, "🔺"))
     else:
         st.caption("Nenhum edital de MG atende aos filtros.")
 
@@ -190,9 +209,9 @@ with aba_raiox:
         st.info("Nenhum edital atende aos critérios atuais do filtro.")
 
 with aba_analytics:
-    sals_mg = [s for s in editais_mg.values() if s > 0]
-    sals_nac = [s for s in editais_nacional.values() if s > 0]
-    
+    sals_mg = [info['salario'] for info in editais_mg.values() if info['salario'] > 0]
+    sals_nac = [info['salario'] for info in editais_nacional.values() if info['salario'] > 0]
+
     media_mg = sum(sals_mg) / len(sals_mg) if sals_mg else 0
     media_nac = sum(sals_nac) / len(sals_nac) if sals_nac else 0
     diferenca = media_nac - media_mg
@@ -230,8 +249,8 @@ with aba_analytics:
     with col_graf2:
         st.markdown("### 🏆 Top Maiores Salários")
         todos_filtrados = {**editais_nacional, **editais_mg}
-        ranking_real = {k: v for k, v in todos_filtrados.items() if v > 0}
-        
+        ranking_real = {k: info['salario'] for k, info in todos_filtrados.items() if info['salario'] > 0}
+
         if ranking_real:
             df_ranking_completo = pd.DataFrame(list(ranking_real.items()), columns=['Concurso', 'Salário Máx.'])
             df_ranking_completo = df_ranking_completo.sort_values(by='Salário Máx.', ascending=False)

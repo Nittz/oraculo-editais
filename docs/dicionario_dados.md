@@ -17,6 +17,8 @@ A coleção `editais_brasil_mg_v2` armazena, para cada chunk:
 | `metadata.titulo` | `str` | dimensão | parser HTML + normalização (`.title()`, split em `-`) | Nome do edital, derivado da âncora do portal |
 | `metadata.abrangencia` | `str` enum | dimensão | URL de origem do scraping | `Nacional` ou `Minas Gerais` |
 | `metadata.salario` | `float` | métrica (BRL) | regex sobre o cartão do anúncio | Maior valor monetário detectado no resumo HTML |
+| `metadata.status` | `str` enum | dimensão | crawler (ciclo de vida) | `aberto` enquanto o edital aparece no portal; `fechado` quando some entre rodadas. Default em registros legados sem o campo: `aberto` |
+| `metadata.data_ultima_visualizacao` | `str` (ISO date) | timestamp | crawler | Data (`YYYY-MM-DD`) da última rodada em que o edital foi observado no portal. Atualizada para hoje sempre que o título reaparece |
 
 ---
 
@@ -45,6 +47,19 @@ A coleção `editais_brasil_mg_v2` armazena, para cada chunk:
 ### `document` (chunk textual)
 - **Tamanho típico**: parágrafos do PDF, com o filtro `len(strip()) > 50`
 - **Limitação**: o split por `\n\n` quebra mal em editais com tabelas, listas numeradas e multi-coluna. A migração para `RecursiveCharacterTextSplitter` está prevista nos próximos passos do README
+
+### `status` (ciclo de vida)
+- **Valores possíveis**: `aberto` | `fechado`
+- **Como é decidido**:
+  - `aberto`: o crawler viu o título do edital no portal nesta rodada
+  - `fechado`: o título existia na base mas **não foi visto** na rodada atual (ou seja, sumiu da listagem)
+- **Decisão de design**: editais fechados **não são apagados** da base — mantemos histórico para análise. O dashboard filtra por `aberto` por padrão; um toggle expõe os fechados quando interessar
+- **Compatibilidade legada**: chunks anteriores ao Bloco 5 não têm o campo. Em todo lugar que lê o status, aplicamos `meta.get('status', 'aberto')` como fallback. Após uma execução completa do crawler novo, todos os chunks passam a ter o campo populado
+
+### `data_ultima_visualizacao`
+- **Formato**: data ISO 8601 (`YYYY-MM-DD`), gravada como string
+- **Quando é atualizada**: a cada rodada do crawler em que o título reaparece. Editais marcados como `fechado` mantêm o último valor gravado (auditoria de quando foi visto pela última vez)
+- **Uso analítico futuro**: possibilita métricas como "tempo médio que um edital permanece aberto" e detecção de retificações silenciosas
 
 ---
 
