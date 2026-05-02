@@ -4,6 +4,7 @@ import chromadb
 import google.generativeai as genai
 import pandas as pd
 import os
+from datetime import date, datetime
 
 # Diretório absoluto do banco vetorial (raiz do projeto, não da pasta app/)
 RAIZ_PROJETO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -53,53 +54,155 @@ colecao = carregar_banco()
 dados_banco = colecao.get()
 total_chunks = len(dados_banco['ids']) if dados_banco['ids'] else 0
 
-# Inicialização da Interface Visual (Sidebar)
+
+# ---------- Helpers de leitura/ordenacao ----------------------------------
+def _parse_data_iso(s):
+    """Devolve datetime.date ou None."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _dias_ate(data_iso_str):
+    """Dias entre hoje e a data ISO; None se ausente ou ja passou ha muito."""
+    d = _parse_data_iso(data_iso_str)
+    if not d:
+        return None
+    return (d - date.today()).days
+
+
+def _sufixo_prazo(data_iso_str):
+    """'📅 Encerra em DD/MM' quando proximo (<=30d) e nao passou."""
+    dias = _dias_ate(data_iso_str)
+    if dias is None or dias < 0 or dias > 30:
+        return ""
+    d = _parse_data_iso(data_iso_str)
+    return f"\n\n📅 *Encerra em {d.strftime('%d/%m')}*"
+
+
+# ---------- Agrega metadados por edital ------------------------------------
+def _agregar_editais(metadatas):
+    """Para cada titulo, escolhe o registro 'mais rico' (mais campos preenchidos)."""
+    editais = {}
+    for meta in metadatas or []:
+        if not (meta and 'titulo' in meta and 'abrangencia' in meta):
+            continue
+        titulo_limpo = meta['titulo'].title()
+        registro = {
+            'salario': meta.get('salario', 0.0),
+            'status': meta.get('status', 'aberto'),
+            'abrangencia': meta['abrangencia'],
+            'orgao': meta.get('orgao'),
+            'uf': meta.get('uf'),
+            'cidade': meta.get('cidade'),
+            'data_inscricao_fim': meta.get('data_inscricao_fim'),
+            'vagas': meta.get('vagas'),
+            'escolaridade': meta.get('escolaridade', ''),
+            'taxa_inscricao': meta.get('taxa_inscricao'),
+            'fonte_extracao': meta.get('fonte_extracao', 'indisponivel'),
+            'confianca_extracao': meta.get('confianca_extracao', 'baixa'),
+        }
+        # Mantem o registro mais informativo (mais campos nao-nulos)
+        anterior = editais.get(titulo_limpo)
+        if anterior is None or _conta_nao_nulos(registro) > _conta_nao_nulos(anterior):
+            editais[titulo_limpo] = registro
+    return editais
+
+
+def _conta_nao_nulos(reg):
+    return sum(1 for v in reg.values() if v not in (None, "", 0.0))
+
+
+# ---------- Sidebar --------------------------------------------------------
 with st.sidebar:
     st.title("⚙️ Painel de Controle")
     st.markdown("Monitoramento do Banco Vetorial e Status da IA.")
 
     st.divider()
 
-    st.markdown("### 🎯 Filtros de Elite")
-    st.caption("Filtre as oportunidades pelo seu nível de interesse:")
-
+    st.markdown("### 🎯 Filtros")
     busca_texto = st.text_input("🔍 Buscar Órgão/Cargo (ex: Câmara, UFMG):", "").strip().lower()
-    filtro_salario = st.slider("💰 Salário Mínimo Exigido:", min_value=0, max_value=30000, value=0, step=1000, format="R$ %d")
-    incluir_fechados = st.toggle(
-        "Incluir editais fechados",
-        value=False,
-        help="Mostra também editais que sumiram do portal entre rodadas (status=fechado).",
+    filtro_salario = st.slider(
+        "💰 Salário Mínimo:", min_value=0, max_value=30000, value=0, step=1000, format="R$ %d"
     )
 
-    # Agrega chunks por título; aplica filtro de status (legado: ausência => aberto).
-    editais_mg_brutos = {}
-    editais_nacional_brutos = {}
-    if dados_banco['metadatas']:
-        for meta in dados_banco['metadatas']:
-            if not (meta and 'titulo' in meta and 'abrangencia' in meta):
-                continue
-            status = meta.get('status', 'aberto')
-            if status != 'aberto' and not incluir_fechados:
-                continue
-            titulo_limpo = meta['titulo'].title()
-            registro = {
-                'salario': meta.get('salario', 0.0),
-                'status': status,
-            }
-            if meta['abrangencia'] == 'Minas Gerais':
-                editais_mg_brutos[titulo_limpo] = registro
-            else:
-                editais_nacional_brutos[titulo_limpo] = registro
+    todos_editais = _agregar_editais(dados_banco.get('metadatas') or [])
 
-    def _atende_filtros(titulo, info):
-        if info['salario'] < filtro_salario:
+    # UF disponíveis (apenas as efetivamente presentes)
+    ufs_presentes = sorted({r['uf'] for r in todos_editais.values() if r.get('uf')})
+    filtro_uf = st.multiselect(
+        "📍 UF:",
+        options=ufs_presentes,
+        default=[],
+        help="Filtra pela UF extraída pelo Gemini. Editais sem UF identificada ficam de fora se algum filtro for aplicado.",
+    )
+
+    # Escolaridade (extrai todas as canonicas presentes)
+    escolaridades_presentes = set()
+    for r in todos_editais.values():
+        for n in (r.get('escolaridade') or '').split(','):
+            n = n.strip()
+            if n:
+                escolaridades_presentes.add(n)
+    filtro_escolaridade = st.multiselect(
+        "🎓 Escolaridade:",
+        options=sorted(escolaridades_presentes),
+        default=[],
+    )
+
+    apenas_com_prazo = st.toggle(
+        "Apenas com prazo conhecido", value=False,
+        help="Mostra somente editais cujo último dia de inscrição foi extraído.",
+    )
+    apenas_proximos = st.toggle(
+        "Próximos do encerramento (≤30d)", value=False,
+        help="Filtra editais com inscrição encerrando nos próximos 30 dias.",
+    )
+    incluir_fechados = st.toggle(
+        "Incluir editais fechados", value=False,
+        help="Inclui editais que sumiram do portal entre rodadas (status=fechado).",
+    )
+
+    # Aplica filtros
+    def _atende(reg, titulo):
+        if reg['status'] != 'aberto' and not incluir_fechados:
+            return False
+        if reg['salario'] < filtro_salario:
             return False
         if busca_texto and busca_texto not in titulo.lower():
             return False
+        if filtro_uf and reg.get('uf') not in filtro_uf:
+            return False
+        if filtro_escolaridade:
+            niveis = {n.strip() for n in (reg.get('escolaridade') or '').split(',') if n.strip()}
+            if not (set(filtro_escolaridade) & niveis):
+                return False
+        if apenas_com_prazo and not reg.get('data_inscricao_fim'):
+            return False
+        if apenas_proximos:
+            dias = _dias_ate(reg.get('data_inscricao_fim'))
+            if dias is None or dias < 0 or dias > 30:
+                return False
         return True
 
-    editais_mg = {k: v for k, v in editais_mg_brutos.items() if _atende_filtros(k, v)}
-    editais_nacional = {k: v for k, v in editais_nacional_brutos.items() if _atende_filtros(k, v)}
+    filtrados = {t: r for t, r in todos_editais.items() if _atende(r, t)}
+
+    # Ordena: por prazo (próximos primeiro, sem prazo no fim), depois alfabetico
+    def _chave_ordem(item):
+        titulo, reg = item
+        dias = _dias_ate(reg.get('data_inscricao_fim'))
+        # editais sem prazo vão pro fim (chave maior), passados também
+        chave_prazo = dias if (dias is not None and dias >= 0) else 9999
+        return (chave_prazo, titulo)
+
+    ordenados = dict(sorted(filtrados.items(), key=_chave_ordem))
+
+    # Separa por região para preservar a UI atual
+    editais_nacional = {t: r for t, r in ordenados.items() if r['abrangencia'] != 'Minas Gerais'}
+    editais_mg = {t: r for t, r in ordenados.items() if r['abrangencia'] == 'Minas Gerais'}
 
     st.divider()
 
@@ -109,7 +212,8 @@ with st.sidebar:
     def _formata_card(titulo, info, prefixo):
         sufixo_status = " — *fechado*" if info['status'] == 'fechado' else ""
         salario_str = f"\n\n*(Até R$ {info['salario']:,.2f})*" if info['salario'] > 0 else ""
-        return f"{prefixo} {titulo}{sufixo_status}{salario_str}"
+        sufixo_prazo = _sufixo_prazo(info.get('data_inscricao_fim'))
+        return f"{prefixo} {titulo}{sufixo_status}{salario_str}{sufixo_prazo}"
 
     st.markdown("**Concursos Nacionais / Federais:**")
     if editais_nacional:

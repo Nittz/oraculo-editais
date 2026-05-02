@@ -10,15 +10,31 @@ Este documento descreve os campos persistidos no pipeline atual e as fontes de o
 
 A coleção `editais_brasil_mg_v2` armazena, para cada chunk:
 
+### 1.1 Campos sempre presentes (gerados pelo crawler)
+
 | Atributo | Tipo no Chroma | Tipo lógico | Origem | Descrição |
 |---|---|---|---|---|
 | `id` | `str` | identificador | gerado em runtime (`aranha_<n>`) | Chave única do chunk dentro da coleção |
-| `document` | `str` | texto | trecho do PDF após `split("\n\n")` | Conteúdo textual do chunk indexado |
+| `document` | `str` | texto | chunk recursivo (paragrafo → sentença → janela) com overlap de 150 chars | Conteúdo textual do chunk indexado |
 | `metadata.titulo` | `str` | dimensão | parser HTML + normalização (`.title()`, split em `-`) | Nome do edital, derivado da âncora do portal |
 | `metadata.abrangencia` | `str` enum | dimensão | URL de origem do scraping | `Nacional` ou `Minas Gerais` |
 | `metadata.salario` | `float` | métrica (BRL) | regex sobre o cartão do anúncio | Maior valor monetário detectado no resumo HTML |
 | `metadata.status` | `str` enum | dimensão | crawler (ciclo de vida) | `aberto` enquanto o edital aparece no portal; `fechado` quando some entre rodadas. Default em registros legados sem o campo: `aberto` |
 | `metadata.data_ultima_visualizacao` | `str` (ISO date) | timestamp | crawler | Data (`YYYY-MM-DD`) da última rodada em que o edital foi observado no portal. Atualizada para hoje sempre que o título reaparece |
+| `metadata.fonte_extracao` | `str` enum | dimensão | crawler | `gemini` quando a extração estruturada rodou; `indisponivel` quando não havia chave ou houve falha |
+| `metadata.confianca_extracao` | `str` enum | dimensão | LLM (auto-avaliação) | `alta` \| `media` \| `baixa` — declarada pelo próprio Gemini ao final da extração |
+
+### 1.2 Campos extraídos via Gemini (presentes só quando a extração teve sucesso)
+
+| Atributo | Tipo no Chroma | Tipo lógico | Exemplo | Observação de qualidade |
+|---|---|---|---|---|
+| `metadata.orgao` | `str` ou ausente | dimensão | `"Prefeitura Municipal de Belo Horizonte"` | Texto livre extraído pelo LLM. Pode variar em formatação entre edições |
+| `metadata.uf` | `str` ou ausente | dimensão | `"MG"` | Validado contra lista oficial de UFs brasileiras. Valores fora da lista viram ausente |
+| `metadata.cidade` | `str` ou ausente | dimensão | `"Belo Horizonte"` | Texto livre. Pode estar em maiúsculas/minúsculas variadas; sem normalização canônica ainda |
+| `metadata.data_inscricao_fim` | `str` (ISO date) ou ausente | timestamp | `"2026-06-30"` | ISO 8601 estrito (`YYYY-MM-DD`). Datas absurdas (< 2020 ou > hoje+5 anos) viram ausente |
+| `metadata.vagas` | `int` ou ausente | métrica | `12` | Total de vagas declarado. Apenas inteiros positivos. Editais que não declaram total ficam ausentes |
+| `metadata.escolaridade` | `str` (CSV) ou ausente | dimensão | `"Médio, Superior"` | Lista canonicizada serializada como CSV. Valores possíveis: `Fundamental`, `Médio`, `Técnico`, `Superior`, `Pós-graduação` |
+| `metadata.taxa_inscricao` | `float` ou ausente | métrica (BRL) | `80.00` | Valor da taxa em reais. Editais gratuitos podem cair em `0.00` ou ausente, dependendo do que o LLM identificou |
 
 ---
 
@@ -61,29 +77,33 @@ A coleção `editais_brasil_mg_v2` armazena, para cada chunk:
 - **Quando é atualizada**: a cada rodada do crawler em que o título reaparece. Editais marcados como `fechado` mantêm o último valor gravado (auditoria de quando foi visto pela última vez)
 - **Uso analítico futuro**: possibilita métricas como "tempo médio que um edital permanece aberto" e detecção de retificações silenciosas
 
+### `fonte_extracao` e `confianca_extracao`
+- **`fonte_extracao`**: `gemini` indica que o pipeline conseguiu extração estruturada via LLM; `indisponivel` quando não havia `GEMINI_API_KEY` no ambiente ou quando o JSON retornado não passou na validação. Permite separar análises confiáveis de baseline puro.
+- **`confianca_extracao`**: declarada pelo próprio modelo durante a extração. `alta` quando os campos principais foram identificados com clareza; `media` quando 2-3 ficaram null/ambíguos; `baixa` quando a maior parte não pôde ser determinada. Útil como filtro defensivo para BI ("considerar só extrações de confiança alta+média").
+
+### Campos opcionais extraídos (`orgao`, `uf`, `cidade`, `data_inscricao_fim`, `vagas`, `escolaridade`, `taxa_inscricao`)
+- **Política de ausência**: campos não preenchidos pelo LLM **não** são gravados no metadata (em vez de `null`). Reduz lixo de filtragem (`meta.get(campo)` devolve `None` naturalmente).
+- **`escolaridade` como CSV**: ChromaDB só aceita escalares em metadata. A lista canonicizada (`["Médio", "Superior"]`) vira a string `"Médio, Superior"` no momento de gravar; o dashboard separa via `split(',')` ao filtrar.
+- **Regravação em rodadas futuras**: o ciclo de vida atual (`atualizar_status_edital`) **preserva** os campos extraídos quando atualiza apenas `status` e `data_ultima_visualizacao`. Para reprocessar a extração, é preciso forçar re-ingestão (TODO: flag no crawler).
+
 ---
 
 ## 3. Campos desejáveis ainda **não** persistidos
 
-Os campos abaixo são úteis para BI, busca e priorização, mas o crawler atual ainda **não** os extrai/persiste. Estão listados em *Próximos passos* no README:
+A maior parte do schema desejado já entrou em produção no Bloco 6 (extração via Gemini). Os campos abaixo continuam como evolução prevista:
 
 | Campo | Tipo previsto | Fonte provável | Comentário |
 |---|---|---|---|
-| `orgao` | `str` | corpo do PDF / título | Hoje vive embutido no `titulo` |
-| `data_publicacao` | `date` | corpo do PDF | Marco temporal do edital |
-| `data_inscricao_inicio` | `date` | corpo do PDF | Habilita alerta proativo |
-| `data_inscricao_fim` | `date` | corpo do PDF | Habilita alerta D-3 |
+| `data_publicacao` | `date` | corpo do PDF | Marco temporal do edital (não confundir com inscrição) |
+| `data_inscricao_inicio` | `date` | corpo do PDF | Habilita alerta proativo de abertura |
 | `data_prova` | `date` | corpo do PDF | Apoia planejamento do candidato |
-| `quantidade_vagas` | `int` | corpo do PDF | Métrica essencial para BI |
-| `nivel_escolaridade` | `enum` | corpo do PDF | Filtro de aderência |
-| `taxa_inscricao` | `float` | corpo do PDF | Custo de oportunidade |
-| `cidade` | `str` | corpo do PDF | Recorte geográfico fino |
 | `link_pdf` | `url` | crawler | Hoje vive apenas em runtime, não é persistido |
 | `link_pagina_oficial` | `url` | crawler | Idem |
-| `data_coleta` | `datetime` | crawler | Rastreabilidade do scraping |
-| `hash_pdf` | `sha256` | crawler | Detectar retificação/prorrogação |
+| `data_coleta` | `datetime` | crawler | Rastreabilidade do scraping (a `data_ultima_visualizacao` cobre parte disso) |
+| `hash_pdf` | `sha256` | crawler | Detectar retificação/prorrogação automaticamente |
+| `cargos` | `list[str]` | corpo do PDF | Granularidade abaixo de `escolaridade`; alimenta busca por cargo específico |
 
-A intenção é que, ao introduzir `pydantic`, esses campos passem a fazer parte do schema canônico do edital, com extração estruturada via LLM antes do chunking.
+Quando estes forem incorporados, será natural promover o schema para `pydantic` e introduzir `argparse` no crawler (`--reextract`, `--limit`, `--regiao`).
 
 ---
 

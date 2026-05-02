@@ -6,8 +6,22 @@ Cobre o ciclo de vida basico:
     e tem `data_ultima_visualizacao` atualizada
   - editais ja indexados que NAO aparecem mais no portal sao marcados como `fechado`
     (a base preserva o historico em vez de apagar)
+
+Quando a variavel de ambiente `GEMINI_API_KEY` esta presente, cada novo edital
+passa por uma extracao estruturada (orgao, UF, cidade, data fim de inscricao,
+vagas, escolaridade, taxa) e os campos sao gravados nos metadados dos chunks.
+Sem chave, o crawler degrada gracosamente para o esquema basico.
 """
 import os
+import sys
+
+# Bootstrap: garante que o pacote `oraculo` e importavel quer o script seja
+# executado como modulo (`python -m oraculo.crawler`) quer diretamente
+# (`python src/oraculo/crawler.py`). Necessario antes do `from oraculo.*`.
+_PKG_PARENT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PKG_PARENT not in sys.path:
+    sys.path.insert(0, _PKG_PARENT)
+
 import re
 import time
 from datetime import date
@@ -17,6 +31,9 @@ import requests
 from bs4 import BeautifulSoup
 import pypdf
 import chromadb
+
+from oraculo.chunking import criar_chunks_recursivos
+from oraculo.extracao import extrair_metadata_edital
 
 
 # ----------------------------------------------------------------------------
@@ -36,8 +53,6 @@ URLS_ALVO = {
 ALVOS_PDF = ["edital", "abertura", "normativo", "completo"]
 
 # Filtro positivo: na aba Sudeste so aceita editais que mencionam MG no cartao.
-# Inversao da logica anterior (lista de UFs proibidas), que falhava quando o
-# portal mudava o formato (ex.: "(SP)" no lugar de "- sp").
 MG_MARKERS = re.compile(r"\b(minas gerais|mg|belo horizonte|bh)\b", re.IGNORECASE)
 
 LIMITE_POR_REGIAO = 10  # quantos editais NOVOS processar por rodada e por regiao
@@ -48,6 +63,30 @@ CABECALHOS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 }
+
+
+# ----------------------------------------------------------------------------
+# Modelo Gemini (opcional, graceful fallback)
+# ----------------------------------------------------------------------------
+def obter_modelo_gemini():
+    """Retorna um modelo Gemini configurado quando GEMINI_API_KEY existe.
+
+    Caso a chave nao esteja no ambiente ou a importacao/configuracao falhe,
+    retorna None. O crawler funciona normalmente sem o modelo, apenas pulando
+    a extracao estruturada (`fonte_extracao='indisponivel'`).
+    """
+    chave = os.environ.get("GEMINI_API_KEY")
+    if not chave:
+        print("Aviso: GEMINI_API_KEY nao encontrada. Extracao estruturada desabilitada.")
+        return None
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=chave)
+        return genai.GenerativeModel("gemini-1.5-flash")
+    except Exception as exc:
+        print(f"Aviso: nao foi possivel inicializar Gemini ({type(exc).__name__}). Seguindo sem extracao.")
+        return None
 
 
 # ----------------------------------------------------------------------------
@@ -65,12 +104,7 @@ def coletar_titulos_da_base(colecao):
 
 
 def atualizar_status_edital(colecao, ids_chunks, status):
-    """Atualiza status e data_ultima_visualizacao de todos os chunks de um edital.
-
-    Preserva os demais campos de metadata. Quando status='aberto', refresca
-    `data_ultima_visualizacao` para a data de hoje. Quando status='fechado',
-    mantem o ultimo `data_ultima_visualizacao` ja gravado (util para auditoria).
-    """
+    """Atualiza status e data_ultima_visualizacao de todos os chunks de um edital."""
     if not ids_chunks:
         return 0
     atual = colecao.get(ids=ids_chunks, include=["metadatas"])
@@ -83,6 +117,36 @@ def atualizar_status_edital(colecao, ids_chunks, status):
         novos_metas.append(novo)
     colecao.update(ids=ids_chunks, metadatas=novos_metas)
     return len(ids_chunks)
+
+
+def construir_metadata_edital(concurso: dict, extraidos: dict) -> dict:
+    """Une dados do crawler + extracao estruturada em um dict apto para ChromaDB.
+
+    ChromaDB so aceita escalares (str/int/float/bool) em metadata. Por isso:
+      - escolaridade (lista) e gravada como string CSV
+      - campos None sao omitidos (deixar ausente e mais limpo que gravar 'null')
+    """
+    metadata = {
+        "titulo": concurso["titulo"],
+        "abrangencia": concurso["abrangencia"],
+        "salario": concurso["salario"],
+        "status": "aberto",
+        "data_ultima_visualizacao": DATA_VISUALIZACAO_HOJE,
+        "fonte_extracao": extraidos["fonte_extracao"],
+        "confianca_extracao": extraidos["confianca_extracao"],
+    }
+    for campo in ("orgao", "uf", "cidade", "data_inscricao_fim"):
+        valor = extraidos.get(campo)
+        if valor:
+            metadata[campo] = valor
+    if extraidos.get("vagas") is not None:
+        metadata["vagas"] = extraidos["vagas"]
+    if extraidos.get("taxa_inscricao") is not None:
+        metadata["taxa_inscricao"] = extraidos["taxa_inscricao"]
+    escolaridade = extraidos.get("escolaridade") or []
+    if escolaridade:
+        metadata["escolaridade"] = ", ".join(escolaridade)
+    return metadata
 
 
 # ----------------------------------------------------------------------------
@@ -129,7 +193,6 @@ def extrair_listagem_de_editais():
             if any(s in texto_cartao for s in ("encerrad", "cancelad", "suspenso")):
                 continue
 
-            # Filtro positivo: para aba Sudeste, exigir evidencia de MG.
             if abrangencia == "Minas Gerais" and not MG_MARKERS.search(texto_cartao):
                 continue
 
@@ -142,7 +205,6 @@ def extrair_listagem_de_editais():
                 except ValueError:
                     pass
 
-            # Normalizacao de titulo
             if titulo_link.lower() in ("vários cargos", "superior", "médio", "fundamental", "ver edital"):
                 linhas_texto = [l.strip() for l in cartao.text.split("\n") if len(l.strip()) > 3]
                 titulo_limpo = linhas_texto[0].title() if linhas_texto else "Concurso Identificado"
@@ -160,8 +222,11 @@ def extrair_listagem_de_editais():
     return encontrados
 
 
-def baixar_e_indexar_edital(concurso, colecao):
-    """Baixa o PDF principal, fationa em chunks e adiciona ao ChromaDB.
+def baixar_e_indexar_edital(concurso, colecao, model_gemini=None):
+    """Baixa o PDF principal, extrai metadados estruturados e indexa os chunks.
+
+    Quando `model_gemini` e None, a extracao estruturada e pulada e os
+    campos derivados ficam ausentes (`fonte_extracao='indisponivel'`).
 
     Retorna True se conseguiu indexar pelo menos um chunk, False caso contrario.
     """
@@ -205,22 +270,27 @@ def baixar_e_indexar_edital(concurso, colecao):
                     for pagina in leitor.pages:
                         texto_completo += pagina.extract_text() + "\n"
 
-                pedacos = [p.strip() for p in texto_completo.split("\n\n") if len(p.strip()) > 50]
+                if not texto_completo.strip():
+                    continue
+
+                # Extracao estruturada (graceful sem modelo)
+                extraidos = extrair_metadata_edital(texto_completo, model_gemini)
+                if extraidos["fonte_extracao"] == "gemini":
+                    print(
+                        f"  -> extracao gemini: orgao={extraidos['orgao']!r} "
+                        f"uf={extraidos['uf']} fim={extraidos['data_inscricao_fim']} "
+                        f"confianca={extraidos['confianca_extracao']}"
+                    )
+
+                # Chunking recursivo (substitui split por '\n\n')
+                pedacos = criar_chunks_recursivos(texto_completo, tamanho_max=1200, overlap=150)
                 if not pedacos:
                     continue
 
                 qtd_atual = colecao.count()
                 ids_pedacos = [f"aranha_{qtd_atual + i}" for i in range(len(pedacos))]
-                metadados = [
-                    {
-                        "titulo": concurso["titulo"],
-                        "abrangencia": concurso["abrangencia"],
-                        "salario": concurso["salario"],
-                        "status": "aberto",
-                        "data_ultima_visualizacao": DATA_VISUALIZACAO_HOJE,
-                    }
-                    for _ in range(len(pedacos))
-                ]
+                metadata_base = construir_metadata_edital(concurso, extraidos)
+                metadados = [dict(metadata_base) for _ in pedacos]
                 colecao.add(documents=pedacos, metadatas=metadados, ids=ids_pedacos)
                 return True
             except Exception:
@@ -240,6 +310,8 @@ def baixar_e_indexar_edital(concurso, colecao):
 # ----------------------------------------------------------------------------
 def main():
     print("A iniciar varredura incremental (Nacional e MG)...\n")
+
+    model_gemini = obter_modelo_gemini()
 
     encontrados = extrair_listagem_de_editais()
     print(f"\nEncontrados {len(encontrados)} concursos abertos compativeis.\n")
@@ -276,7 +348,7 @@ def main():
         print(f"[{regiao}] Novo edital (R$ {concurso['salario']}). A descarregar: {titulo}")
         time.sleep(2)
 
-        if baixar_e_indexar_edital(concurso, colecao):
+        if baixar_e_indexar_edital(concurso, colecao, model_gemini):
             processados[regiao] += 1
             novos_adicionados += 1
             print("  -> sucesso: inserido no banco de dados")
