@@ -1,22 +1,22 @@
 name: 🕷️ Robô Caçador de Editais
 
-# Define quando o robô vai acordar
+# Trigger por agendamento está DESATIVADO até termos persistência externa
+# do banco vetorial (ver `Próximos passos` no README e `docs/deploy_huggingface.md`).
+# Por enquanto, só roda manualmente via "Run workflow" no GitHub Actions.
 on:
-  schedule:
-    #  Meia-noite, a cada 2 dias
-    - cron: '0 0 */2 * *' 
-  workflow_dispatch: # Permite que você clique num botão no GitHub para rodar manualmente quando quiser
+  workflow_dispatch:
 
-# Permissão vital para o robô poder "escrever" (salvar) o banco de dados atualizado de volta no GitHub
+# Sem permissões de escrita: o workflow já não tenta commitar banco_vetorial.
+# Quando voltar a fazer push (para uma branch de deploy ou storage externo),
+# reativar `contents: write` ou usar um token específico.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 📥 Clonar os ficheiros do repositório
+      - name: 📥 Checkout do repositório
         uses: actions/checkout@v4
 
       - name: 🐍 Configurar Python 3.10
@@ -24,22 +24,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 📦 Instalar dependências (Bibliotecas)
+      - name: 📦 Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: 🤖 Acordar o Robô (Executar o Crawler)
+      - name: 🤖 Executar o crawler
         run: python src/oraculo/crawler.py
 
-      - name: 💾 Guardar os novos dados no Banco Vetorial
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          
-          # Adiciona as mudanças da pasta do banco de dados
-          git add banco_vetorial/
-          
-          # Se o robô encontrou dados novos, ele faz o commit. Se não, ignora o erro e segue em frente.
-          git commit -m "🤖 Atualização automática: Novos editais adicionados ao banco" || echo "Nenhum edital novo hoje. Nada a salvar."
-          
-          # Envia os dados atualizados de volta para o repositório
-          git push
+      # NOTA: o passo de commit/push do banco_vetorial foi removido.
+      # O ChromaDB persistente do runner é volátil e só serve para validar
+      # que o crawler roda sem erro neste ambiente. Para que os dados
+      # cheguem ao Hugging Face Space, ainda é necessário rodar o crawler
+      # localmente e fazer push da branch hf-deploy (ver
+      # docs/deploy_huggingface.md).
