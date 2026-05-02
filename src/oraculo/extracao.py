@@ -101,7 +101,12 @@ def extrair_metadata_edital(texto_pdf: str, model) -> dict:
         resposta = model.generate_content(prompt)
         bruto = _extrair_json_da_resposta(getattr(resposta, "text", "") or "")
     except Exception as exc:
-        print(f"  -> aviso: extracao Gemini falhou ({type(exc).__name__}); seguindo sem metadados estruturados")
+        nome_modelo = getattr(model, "nome_modelo", "?")
+        msg = str(exc).splitlines()[0][:200] if str(exc) else "?"
+        print(
+            f"  -> aviso: extracao Gemini falhou com modelo {nome_modelo} "
+            f"({type(exc).__name__}: {msg}); seguindo sem metadados estruturados"
+        )
         return base
 
     if not isinstance(bruto, dict):

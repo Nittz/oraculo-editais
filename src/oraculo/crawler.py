@@ -68,24 +68,50 @@ CABECALHOS = {
 # ----------------------------------------------------------------------------
 # Modelo Gemini (opcional, graceful fallback)
 # ----------------------------------------------------------------------------
-def obter_modelo_gemini():
-    """Retorna um modelo Gemini configurado quando GEMINI_API_KEY existe.
+class _ClienteGemini:
+    """Adapter pequeno para uniformizar a chamada `generate_content(prompt)`.
 
-    Caso a chave nao esteja no ambiente ou a importacao/configuracao falhe,
-    retorna None. O crawler funciona normalmente sem o modelo, apenas pulando
-    a extracao estruturada (`fonte_extracao='indisponivel'`).
+    Encapsula o cliente do SDK novo (`google-genai`) e o nome do modelo
+    selecionado (via env `GEMINI_MODEL` ou default `gemini-2.5-flash-lite`).
+    A interface `generate_content(prompt)` espelha o SDK antigo, permitindo
+    que `extracao.extrair_metadata_edital` continue agnostico do SDK.
+    """
+
+    def __init__(self, client, nome_modelo: str):
+        self._client = client
+        self.nome_modelo = nome_modelo
+
+    def generate_content(self, prompt: str):
+        return self._client.models.generate_content(
+            model=self.nome_modelo, contents=prompt
+        )
+
+
+def obter_modelo_gemini():
+    """Retorna um wrapper de cliente Gemini configurado, ou None.
+
+    Usa o SDK novo `google-genai` (substitui `google.generativeai`, descontinuado).
+    Le `GEMINI_API_KEY` do ambiente; modelo via `GEMINI_MODEL`
+    (default `gemini-2.5-flash-lite`). Em qualquer falha devolve None — o
+    crawler segue rodando sem extracao estruturada.
     """
     chave = os.environ.get("GEMINI_API_KEY")
     if not chave:
         print("Aviso: GEMINI_API_KEY nao encontrada. Extracao estruturada desabilitada.")
         return None
-    try:
-        import google.generativeai as genai
 
-        genai.configure(api_key=chave)
-        return genai.GenerativeModel("gemini-1.5-flash")
+    nome_modelo = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=chave)
+        return _ClienteGemini(client, nome_modelo)
     except Exception as exc:
-        print(f"Aviso: nao foi possivel inicializar Gemini ({type(exc).__name__}). Seguindo sem extracao.")
+        print(
+            f"Aviso: nao foi possivel inicializar Gemini "
+            f"(modelo={nome_modelo}, {type(exc).__name__}: {exc}). "
+            "Seguindo sem extracao."
+        )
         return None
 
 
