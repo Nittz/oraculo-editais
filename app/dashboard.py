@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 import chromadb
-import google.generativeai as genai
+from google import genai
 import pandas as pd
 import os
 from datetime import date, datetime
@@ -31,16 +31,29 @@ if not CHAVE_GEMINI:
         "**Hugging Face Spaces / Docker:** defina a variável de ambiente `GEMINI_API_KEY`."
     )
     st.stop()
-genai.configure(api_key=CHAVE_GEMINI)
 
-# Função original que estava a funcionar corretamente para carregar o modelo
+
+# Wrapper para uniformizar `modelo.generate_content(prompt)` sobre o SDK
+# novo `google-genai`. Mantem o resto do dashboard agnostico do SDK.
+class _ClienteGemini:
+    def __init__(self, client, nome_modelo: str):
+        self._client = client
+        self.nome_modelo = nome_modelo
+
+    def generate_content(self, prompt: str):
+        return self._client.models.generate_content(
+            model=self.nome_modelo, contents=prompt
+        )
+
+
+NOME_MODELO_GEMINI = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+
 @st.cache_resource
 def carregar_motor_ia():
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            nome_limpo = m.name.replace("models/", "")
-            return genai.GenerativeModel(nome_limpo)
-    return genai.GenerativeModel('gemini-1.5-flash')
+    client = genai.Client(api_key=CHAVE_GEMINI)
+    return _ClienteGemini(client, NOME_MODELO_GEMINI)
+
 
 modelo = carregar_motor_ia()
 
@@ -254,7 +267,7 @@ with aba_raiox:
         with col_botao:
             st.write("") 
             st.write("")
-            gerar = st.button("Gerar Raio-X Completo", type="primary", use_container_width=True)
+            gerar = st.button("Gerar Raio-X Completo", type="primary", width="stretch")
             
         if gerar:
             with st.spinner(f"A analisar o edital: {edital_alvo}..."):
@@ -361,7 +374,7 @@ with aba_analytics:
             
             df_visual = df_ranking_completo.head(5).copy()
             df_visual['Salário Máx.'] = df_visual['Salário Máx.'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            st.dataframe(df_visual, use_container_width=True, hide_index=True)
+            st.dataframe(df_visual, width="stretch", hide_index=True)
             
             csv_data = df_ranking_completo.to_csv(index=False).encode('utf-8')
             st.download_button(
